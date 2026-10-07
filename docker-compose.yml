@@ -1,0 +1,65 @@
+x-python: &python
+  build: .
+  env_file: .env
+  environment:
+    # api + ingest use the low-privilege role (RLS enforced); worker needs the owner for DDL
+    DATABASE_URL: postgresql://log_app:${APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    DATABASE_ADMIN_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  depends_on:
+    postgres:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db:/docker-entrypoint-initdb.d:ro   # 01_schema.sql then 02_app_role.sh (first start only)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped   # no published port: DB is internal only
+
+  api:
+    <<: *python
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  ingest:
+    <<: *python
+    command: python -m ingest.syslog_listener
+    ports:
+      - "514:5514/udp"
+      - "514:5514/tcp"
+    volumes:
+      - ./data/geoip:/data/geoip:ro
+  worker:
+    <<: *python
+    command: python -m app.worker
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [api, frontend]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  caddy_data:

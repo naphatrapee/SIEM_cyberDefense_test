@@ -1,0 +1,19 @@
+# Manual CD: pull the latest main on the SaaS VM and restart the stack.
+# Needs repo secrets DEPLOY_HOST and DEPLOY_SSH_KEY (private key of a user that can ssh to the VM).
+name: Deploy
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -m 600 /dev/null key
+          printf '%s\n' "$KEY" > key
+          ssh -i key -o StrictHostKeyChecking=accept-new "ubuntu@$HOST" \
+            'cd /opt/logdemo && sudo git pull --ff-only && sudo make up'
